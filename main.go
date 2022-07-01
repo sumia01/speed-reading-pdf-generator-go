@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	_ "embed"
 	"io/ioutil"
 	"log"
@@ -13,17 +14,20 @@ import (
 //go:embed font/roboto-regular.ttf
 var font []byte
 
-var pageSize = &gopdf.Rect{H: 420, W: 595}
-
 const (
-	fontName = "roboto-regular"
-	sep      = string(os.PathSeparator)
-	inDir    = "." + sep + "In"
-	outDir   = "." + sep + "Out"
-	pdfExt   = ".pdf"
-	txtExt   = ".txt"
-	fontSize = 30
+	pageWidth   = 595
+	pageHeight  = 420
+	fontName    = "roboto-regular"
+	sep         = string(os.PathSeparator)
+	inDir       = "." + sep + "In"
+	outDir      = "." + sep + "Out"
+	pdfExt      = ".pdf"
+	txtExt      = ".txt"
+	maxFontSize = 100
+	marginX     = 50
 )
+
+var pageSize = &gopdf.Rect{H: pageHeight, W: pageWidth}
 
 func main() {
 	_, err := os.Stat(inDir)
@@ -53,7 +57,9 @@ func main() {
 				continue
 			}
 
+			file = bytes.ReplaceAll(file, []byte("\n"), []byte(" "))
 			words := strings.Split(string(file), " ")
+
 			err = createPdfFromText(
 				words,
 				strings.TrimSuffix(
@@ -76,19 +82,42 @@ func createPdfFromText(words []string, filename string) error {
 		return err
 	}
 
-	err = pdf.SetFont(fontName, "", fontSize)
-	if err != nil {
-		return err
+	calculateAndSetMaxFontSize := func(word string, size int) (float64, int, error) {
+		var textwidth float64
+		for {
+			err := pdf.SetFont(fontName, "", size)
+			if err != nil {
+				return 0, size, err
+			}
+
+			newTextwidth, err := pdf.MeasureTextWidth(word)
+			if err != nil {
+				return 0, size, err
+			}
+
+			if newTextwidth > pageWidth-(marginX*2) || size > maxFontSize {
+				err := pdf.SetFont(fontName, "", size-1)
+				if err != nil {
+					return 0, size, err
+				}
+
+				break
+			}
+
+			textwidth = newTextwidth
+			size++
+		}
+
+		return textwidth, size, nil
 	}
 
 	for _, word := range words {
-		size := pageSize
-		textwidth, err := pdf.MeasureTextWidth(word)
+		textwidth, currentFontSize, err := calculateAndSetMaxFontSize(word, 20)
 		if err != nil {
 			continue
 		}
 
-		pdf.SetMargins(size.W/2-(textwidth/2), size.H/2-(fontSize/2), 0, 0)
+		pdf.SetMargins(pageSize.W/2-(textwidth/2), pageSize.H/2-(float64(currentFontSize)/2), 0, 0)
 
 		if len(word) == 0 {
 			continue
